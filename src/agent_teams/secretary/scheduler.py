@@ -12,6 +12,7 @@ from telegram.ext import Application, ContextTypes
 from agent_teams.config import STATE_DIR, OWNER_ID
 from agent_teams.secretary.engine import generate_proactive_message
 from agent_teams.teams.daily_briefing import generate_briefing
+from agent_teams.notion_logger import log_conversation as notion_log
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,12 @@ async def morning_routine(context: ContextTypes.DEFAULT_TYPE):
             text=message[:4000],
         )
         logger.info("Morning message sent")
+        # Notion 기록
+        notion_log(
+            from_agent="Secretary", to_agent="User",
+            message=message, team="secretary", channel="scheduler",
+            thinking=f"외부 컨텍스트: {external[:300]}",
+        )
     except Exception as e:
         logger.error(f"Morning message failed: {e}")
 

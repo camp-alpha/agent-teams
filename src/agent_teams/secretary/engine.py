@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 
 from agent_teams.llm import run_gemini_sync
+from agent_teams.notion_logger import log_conversation as notion_log
 from agent_teams.secretary.memory import (
     get_full_context,
     add_conversation_summary,
@@ -99,8 +100,18 @@ def process_user_response(user_message: str) -> str:
 
     response = run_gemini_sync(response_prompt, timeout=60)
 
-    # 2단계: 기억 업데이트 (비동기적으로 처리)
+    # 2단계: 기억 업데이트
     _update_memory_from_conversation(user_message, response)
+
+    # 3단계: Notion 기록 (thinking = 기억 컨텍스트)
+    try:
+        notion_log(
+            from_agent="Secretary", to_agent="User",
+            message=response, team="secretary", channel="telegram",
+            thinking=f"Memory context used:\n{memory_context[:500]}",
+        )
+    except Exception:
+        pass
 
     return response
 

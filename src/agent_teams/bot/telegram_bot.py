@@ -29,6 +29,7 @@ from agent_teams.teams.router import resolve_team_route, build_team_prompt
 from agent_teams.teams.daily_briefing import generate_briefing, get_latest_briefing
 from agent_teams.secretary.engine import generate_proactive_message, process_user_response
 from agent_teams.secretary.scheduler import setup_scheduler
+from agent_teams.notion_logger import log_conversation as notion_log
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
@@ -52,7 +53,9 @@ def save_state(state: dict):
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def log_conversation(user: str, agent: str, message: str, response: str):
+def log_conversation(user: str, agent: str, message: str, response: str,
+                     team: str = "", channel: str = "telegram"):
+    # 로컬 jsonl
     entry = {
         "ts": datetime.now().isoformat(),
         "user": user,
@@ -63,6 +66,21 @@ def log_conversation(user: str, agent: str, message: str, response: str):
     try:
         with open(LOG_FILE, "a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+    # Notion DB 기록 (비동기적으로, 실패해도 무시)
+    try:
+        # 사용자 → 에이전트
+        notion_log(
+            from_agent="User", to_agent=agent.split(".")[0].capitalize(),
+            message=message, team=team, channel=channel,
+        )
+        # 에이전트 → 사용자
+        notion_log(
+            from_agent=agent.split(".")[0].capitalize(), to_agent="User",
+            message=response, team=team, channel=channel,
+        )
     except Exception:
         pass
 
@@ -191,7 +209,7 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(prefix + output[i:i+4000])
         else:
             await update.message.reply_text(content)
-        log_conversation(user, agent_label, raw_msg, output)
+        log_conversation(user, agent_label, raw_msg, output, team=route.team_id)
         return
 
     # 기본: Secretary에게 전달
@@ -240,7 +258,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_event_loop()
     output = await loop.run_in_executor(None, process_user_response, text)
     await update.message.reply_text(f"{output[:4000]}")
-    log_conversation(user, "secretary", text, output)
+    log_conversation(user, "secretary", text, output, team="secretary")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
