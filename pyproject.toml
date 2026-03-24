@@ -1,0 +1,14 @@
+[project]
+name = "agent-teams"
+version = "0.1.0"
+description = "Multi-agent team orchestration: Secretary, Startup, Quant, Infra"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot>=22.0",
+]
+
+[project.scripts]
+agent-bot = "agent_teams.bot.telegram_bot:main"
+
+[tool.ruff]
+line-length = 100
