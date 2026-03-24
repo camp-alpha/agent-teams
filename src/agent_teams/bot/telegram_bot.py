@@ -21,11 +21,13 @@ from telegram.ext import (
     filters,
 )
 
-from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR
+from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID
 from agent_teams.llm import run_gemini_async, run_claude_sync
 from agent_teams.teams.registry import list_teams, get_agent, TEAMS
 from agent_teams.teams.router import resolve_team_route, build_team_prompt
 from agent_teams.teams.daily_briefing import generate_briefing, get_latest_briefing
+from agent_teams.secretary.engine import generate_proactive_message, process_user_response
+from agent_teams.secretary.scheduler import setup_scheduler
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
@@ -74,6 +76,9 @@ def authorized(update: Update) -> bool:
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user.id != OWNER_ID:
+        await update.message.reply_text("등록 권한이 없습니다.")
+        return
     state = load_state()
     allowed = state.get("allowed_users", [])
     if user.id not in allowed:
@@ -213,7 +218,7 @@ async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(output[:4000])
 
 
-# 일반 메시지 → Secretary로 전달
+# 일반 메시지 → Secretary 대화 엔진 (기억 기반)
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
         return
@@ -221,12 +226,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
     user = update.effective_user.first_name
-    secretary = get_agent("secretary")
-    if secretary:
-        prompt = f"{secretary.persona}\n\n---\n[비서에게 온 메시지]\n{text}"
-        output = await run_gemini_async(prompt, timeout=120)
-        await update.message.reply_text(f"{output[:4000]}")
-        log_conversation(user, "secretary", text, output)
+    loop = asyncio.get_event_loop()
+    output = await loop.run_in_executor(None, process_user_response, text)
+    await update.message.reply_text(f"{output[:4000]}")
+    log_conversation(user, "secretary", text, output)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -253,7 +256,10 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
-    logger.info("Agent Teams Bot started")
+    # 스케줄러 등록 (매일 09:00 아침 루틴)
+    setup_scheduler(app)
+
+    logger.info("Agent Teams Bot started (scheduler active)")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

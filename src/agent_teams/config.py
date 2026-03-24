@@ -32,3 +32,6 @@ NOTION_IDS = {
 }
 
 METRICS_FILE = STATE_DIR / "metrics.jsonl"
+
+# 봇 소유자 (등록 가능한 유일한 사용자)
+OWNER_ID = int(os.environ.get("OWNER_ID", "8157972337"))
