@@ -33,5 +33,10 @@ NOTION_IDS = {
 
 METRICS_FILE = STATE_DIR / "metrics.jsonl"
 
+# Claude 세션 기반 에이전트 (실제 시스템 접근 필요한 팀)
+CLAUDE_SESSIONS = {
+    "infra": os.environ.get("SRE_SESSION_ID", "c797382a-c2da-488a-858c-0d5d86929904"),
+}
+
 # 봇 소유자 (등록 가능한 유일한 사용자)
 OWNER_ID = int(os.environ.get("OWNER_ID", "8157972337"))

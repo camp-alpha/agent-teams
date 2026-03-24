@@ -23,6 +23,7 @@ from telegram.ext import (
 
 from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID
 from agent_teams.llm import run_gemini_async, run_claude_sync
+from agent_teams.config import CLAUDE_BIN
 from agent_teams.teams.registry import list_teams, get_agent, TEAMS
 from agent_teams.teams.router import resolve_team_route, build_team_prompt
 from agent_teams.teams.daily_briefing import generate_briefing, get_latest_briefing
@@ -167,11 +168,21 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         raw_msg = " ".join(route.remaining_args)
         agent_label = f"{route.team_id}.{route.agent_id}"
-        team_prompt = build_team_prompt(route, raw_msg)
         await update.message.reply_text(f"🤖 [{agent_label}] 처리 중...")
 
-        # Gemini로 팀 에이전트 실행 (Claude 세션 불필요)
-        output = await run_gemini_async(team_prompt, timeout=180)
+        # infra 팀 → Claude SRE 세션 (실제 시스템 접근)
+        from agent_teams.config import CLAUDE_SESSIONS
+        if route.team_id in CLAUDE_SESSIONS:
+            session_id = CLAUDE_SESSIONS[route.team_id]
+            loop = asyncio.get_event_loop()
+            output = await loop.run_in_executor(
+                None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
+            )
+        else:
+            # 그 외 팀 → Gemini (페르소나 기반)
+            team_prompt = build_team_prompt(route, raw_msg)
+            output = await run_gemini_async(team_prompt, timeout=180)
+
         header = f"🤖 [{agent_label}] → {user}\n\n"
         content = header + output
         if len(content) > 4000:
