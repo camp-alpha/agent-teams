@@ -204,16 +204,20 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🤖 [{agent_label}] 처리 중...")
 
         try:
-            # infra 팀 → Claude SRE 세션 (실제 시스템 접근)
             from agent_teams.config import CLAUDE_SESSIONS
             if route.team_id in CLAUDE_SESSIONS:
+                # infra → Claude SRE 세션 (research-control cwd)
                 session_id = CLAUDE_SESSIONS[route.team_id]
                 loop = asyncio.get_event_loop()
                 output = await loop.run_in_executor(
-                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=120, cwd="/home/younjihoon/research-control")[0]
                 )
+            elif route.team_id == "secretary":
+                # secretary → 대화 엔진 (메모리 포함)
+                loop = asyncio.get_event_loop()
+                output = await loop.run_in_executor(None, process_user_response, raw_msg)
             else:
-                # 그 외 팀 → Gemini 기본 (/c로 호출 시 Claude)
+                # 그 외 팀 → Gemini
                 output = await run_gemini_async(
                     f"{route.persona}\n\n---\n{raw_msg}", timeout=180
                 )
@@ -232,18 +236,16 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         log_conversation(user, agent_label, raw_msg, output, team=route.team_id)
         return
 
-    # 기본: Secretary에게 전달
+    # 기본: Secretary 대화 엔진 (메모리 포함)
     raw_msg = " ".join(raw_args)
-    secretary = get_agent("secretary")
-    if secretary:
-        prompt = f"{secretary.persona}\n\n---\n[비서에게 온 메시지]\n{raw_msg}"
-        await update.message.reply_text(f"🤖 [secretary] 처리 중...")
-        output = await run_gemini_async(prompt, timeout=120)
-        await safe_reply(update.message, f"🤖 [secretary] → {user}\n\n{output[:4000]}")
-        log_conversation(user, "secretary", raw_msg, output)
-    else:
-        output = await run_gemini_async(raw_msg, timeout=120)
-        await update.message.reply_text(f"⚡ {output[:4000]}")
+    await update.message.reply_text(f"🤖 [secretary] 처리 중...")
+    try:
+        loop = asyncio.get_event_loop()
+        output = await loop.run_in_executor(None, process_user_response, raw_msg)
+    except Exception as e:
+        output = f"[에러] {str(e)[:300]}"
+    await safe_reply(update.message, f"🤖 [secretary] → {user}\n\n{output[:4000]}")
+    log_conversation(user, "secretary", raw_msg, output, team="secretary")
 
 
 async def cmd_c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -274,7 +276,7 @@ async def cmd_c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 session_id = CLAUDE_SESSIONS[route.team_id]
                 loop = asyncio.get_event_loop()
                 output = await loop.run_in_executor(
-                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=300)[0]
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=300, cwd="/home/younjihoon/research-control")[0]
                 )
             else:
                 prompt = f"{route.persona}\n\n---\n{raw_msg}"
