@@ -21,7 +21,7 @@ from telegram.ext import (
     filters,
 )
 
-from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID
+from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID, TEAM_CWD, DEFAULT_CWD
 from agent_teams.llm import run_gemini_async, run_claude_sync, run_claude_oneshot_async
 from agent_teams.teams.registry import list_teams, get_agent, TEAMS
 from agent_teams.teams.router import resolve_team_route, build_team_prompt
@@ -205,21 +205,22 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         try:
             from agent_teams.config import CLAUDE_SESSIONS
+            team_cwd = TEAM_CWD.get(route.team_id, DEFAULT_CWD)
             if route.team_id in CLAUDE_SESSIONS:
-                # infra → Claude SRE 세션 (research-control cwd)
+                # infra → Claude SRE 세션
                 session_id = CLAUDE_SESSIONS[route.team_id]
                 loop = asyncio.get_event_loop()
                 output = await loop.run_in_executor(
-                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=120, cwd="/home/younjihoon/research-control")[0]
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=120, cwd=team_cwd)[0]
                 )
             elif route.team_id == "secretary":
                 # secretary → 대화 엔진 (메모리 포함)
                 loop = asyncio.get_event_loop()
                 output = await loop.run_in_executor(None, process_user_response, raw_msg)
             else:
-                # 그 외 팀 → Gemini
+                # 그 외 팀 → Gemini (팀별 cwd)
                 output = await run_gemini_async(
-                    f"{route.persona}\n\n---\n{raw_msg}", timeout=180
+                    f"{route.persona}\n\n---\n{raw_msg}", timeout=180, cwd=team_cwd
                 )
         except Exception as e:
             output = f"[에러] {str(e)[:300]}"
@@ -272,15 +273,16 @@ async def cmd_c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         try:
             from agent_teams.config import CLAUDE_SESSIONS
+            team_cwd = TEAM_CWD.get(route.team_id, DEFAULT_CWD)
             if route.team_id in CLAUDE_SESSIONS:
                 session_id = CLAUDE_SESSIONS[route.team_id]
                 loop = asyncio.get_event_loop()
                 output = await loop.run_in_executor(
-                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=300, cwd="/home/younjihoon/research-control")[0]
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=300, cwd=team_cwd)[0]
                 )
             else:
                 prompt = f"{route.persona}\n\n---\n{raw_msg}"
-                output = await run_claude_oneshot_async(prompt, timeout=300)
+                output = await run_claude_oneshot_async(prompt, timeout=300, cwd=team_cwd)
         except Exception as e:
             output = f"[에러] {str(e)[:300]}"
             logger.error(f"cmd_c error ({agent_label}): {e}", exc_info=True)

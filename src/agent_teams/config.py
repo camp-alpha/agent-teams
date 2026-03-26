@@ -38,5 +38,14 @@ CLAUDE_SESSIONS = {
     "infra": os.environ.get("SRE_SESSION_ID", "c797382a-c2da-488a-858c-0d5d86929904"),
 }
 
+# 팀별 작업 디렉토리
+TEAM_CWD = {
+    "secretary": os.path.expanduser("~"),
+    "startup": os.environ.get("STARTUP_CWD", os.path.expanduser("~/projects")),
+    "quant": os.environ.get("QUANT_CWD", "/home/younjihoon/data"),
+    "infra": "/home/younjihoon/research-control",
+}
+DEFAULT_CWD = os.path.expanduser("~")
+
 # 봇 소유자 (등록 가능한 유일한 사용자)
 OWNER_ID = int(os.environ.get("OWNER_ID", "8157972337"))
