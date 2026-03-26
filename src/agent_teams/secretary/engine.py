@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import datetime
 
-from agent_teams.llm import run_gemini_sync
+from agent_teams.llm import run_gemini_sync, run_claude_oneshot, classify_task
 from agent_teams.notion_logger import log_conversation as notion_log
 from agent_teams.secretary.memory import (
     get_full_context,
@@ -89,7 +89,7 @@ def process_user_response(user_message: str) -> str:
     memory_context = get_full_context()
     now = datetime.now()
 
-    # 1단계: 응답 생성
+    # 1단계: 응답 생성 (복잡도에 따라 Gemini/Claude 선택)
     response_prompt = (
         f"{SECRETARY_SYSTEM}\n\n"
         f"현재 시각: {now.strftime('%Y년 %m월 %d일 %A %H:%M')}\n\n"
@@ -98,7 +98,11 @@ def process_user_response(user_message: str) -> str:
         f"위에 대해 응답하세요. 필요하면 추가 질문을 하세요."
     )
 
-    response = run_gemini_sync(response_prompt, timeout=60)
+    engine = classify_task(user_message)
+    if engine == "claude":
+        response = run_claude_oneshot(response_prompt, timeout=120)
+    else:
+        response = run_gemini_sync(response_prompt, timeout=60)
 
     # 2단계: 기억 업데이트
     _update_memory_from_conversation(user_message, response)

@@ -22,8 +22,7 @@ from telegram.ext import (
 )
 
 from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID
-from agent_teams.llm import run_gemini_async, run_claude_sync
-from agent_teams.config import CLAUDE_BIN
+from agent_teams.llm import run_gemini_async, run_claude_sync, run_hybrid_async
 from agent_teams.teams.registry import list_teams, get_agent, TEAMS
 from agent_teams.teams.router import resolve_team_route, build_team_prompt
 from agent_teams.teams.daily_briefing import generate_briefing, get_latest_briefing
@@ -214,9 +213,10 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
                 )
             else:
-                # 그 외 팀 → Gemini (페르소나 기반)
+                # 그 외 팀 → 하이브리드 (단순→Gemini, 복잡→Claude)
                 team_prompt = build_team_prompt(route, raw_msg)
-                output = await run_gemini_async(team_prompt, timeout=180)
+                output, engine = await run_hybrid_async(raw_msg, system_prompt=route.persona, timeout=180)
+                agent_label += f"/{engine}"
         except Exception as e:
             output = f"[에러] {str(e)[:300]}"
             logger.error(f"Team agent error ({agent_label}): {e}", exc_info=True)
