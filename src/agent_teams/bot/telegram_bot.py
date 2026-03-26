@@ -22,7 +22,7 @@ from telegram.ext import (
 )
 
 from agent_teams.config import TELEGRAM_BOT_TOKEN, STATE_DIR, OWNER_ID
-from agent_teams.llm import run_gemini_async, run_claude_sync, run_hybrid_async
+from agent_teams.llm import run_gemini_async, run_claude_sync, run_claude_oneshot_async
 from agent_teams.teams.registry import list_teams, get_agent, TEAMS
 from agent_teams.teams.router import resolve_team_route, build_team_prompt
 from agent_teams.teams.daily_briefing import generate_briefing, get_latest_briefing
@@ -125,19 +125,19 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 HELP_TEXT = (
     "👥 Agent Teams Bot\n\n"
-    "💬 팀 에이전트\n"
-    "/q @secretary <메시지> — 비서\n"
+    "💬 팀 에이전트 (Gemini 기본)\n"
     "/q @startup <메시지> — CEO\n"
     "/q @startup.dev <메시지> — 개발자\n"
-    "/q @startup.market <메시지> — 시장조사\n"
     "/q @quant <메시지> — 퀀트 연구원\n"
-    "/q @infra <메시지> — SRE\n"
-    "/q @gemini <메시지> — Gemini 직접\n"
+    "/q @infra <메시지> — SRE (Claude)\n"
     "/q <메시지> — Secretary 기본\n\n"
+    "🧠 Claude 강제 (/c)\n"
+    "/c <메시지> — Secretary/Claude\n"
+    "/c @startup <메시지> — CEO/Claude\n"
+    "/c @팀 <메시지> — 해당 팀/Claude\n\n"
     "📋 관리\n"
     "/teams — 팀 목록\n"
     "/briefing — 아침 브리핑\n"
-    "/briefing gen — 브리핑 생성\n"
     "/log — 최근 대화\n"
 )
 
@@ -213,10 +213,10 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
                 )
             else:
-                # 그 외 팀 → 하이브리드 (단순→Gemini, 복잡→Claude)
-                team_prompt = build_team_prompt(route, raw_msg)
-                output, engine = await run_hybrid_async(raw_msg, system_prompt=route.persona, timeout=180)
-                agent_label += f"/{engine}"
+                # 그 외 팀 → Gemini 기본 (/c로 호출 시 Claude)
+                output = await run_gemini_async(
+                    f"{route.persona}\n\n---\n{raw_msg}", timeout=180
+                )
         except Exception as e:
             output = f"[에러] {str(e)[:300]}"
             logger.error(f"Team agent error ({agent_label}): {e}", exc_info=True)
@@ -244,6 +244,70 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         output = await run_gemini_async(raw_msg, timeout=120)
         await update.message.reply_text(f"⚡ {output[:4000]}")
+
+
+async def cmd_c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Claude 강제 호출. /q와 동일하지만 항상 Claude 사용."""
+    if not authorized(update):
+        return
+    if not ctx.args:
+        await update.message.reply_text("사용법: /c [@팀] <메시지>")
+        return
+
+    user = update.effective_user.first_name
+    raw_args = list(ctx.args)
+    logger.info(f"cmd_c (Claude) from {user}: {' '.join(raw_args)[:50]}")
+
+    route = resolve_team_route(raw_args)
+
+    if route.route_type == "team":
+        if not route.remaining_args:
+            await update.message.reply_text(f"사용법: /c @{route.team_id} <메시지>")
+            return
+        raw_msg = " ".join(route.remaining_args)
+        agent_label = f"{route.team_id}.{route.agent_id}/claude"
+        await update.message.reply_text(f"🧠 [{agent_label}] 처리 중...")
+
+        try:
+            from agent_teams.config import CLAUDE_SESSIONS
+            if route.team_id in CLAUDE_SESSIONS:
+                session_id = CLAUDE_SESSIONS[route.team_id]
+                loop = asyncio.get_event_loop()
+                output = await loop.run_in_executor(
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=300)[0]
+                )
+            else:
+                prompt = f"{route.persona}\n\n---\n{raw_msg}"
+                output = await run_claude_oneshot_async(prompt, timeout=300)
+        except Exception as e:
+            output = f"[에러] {str(e)[:300]}"
+            logger.error(f"cmd_c error ({agent_label}): {e}", exc_info=True)
+
+        await safe_reply(update.message, f"🧠 [{agent_label}] → {user}\n\n{output[:4000]}")
+        log_conversation(user, agent_label, raw_msg, output, team=route.team_id)
+        return
+
+    # 팀 미지정 → Secretary/Claude
+    raw_msg = " ".join(route.remaining_args or raw_args)
+    await update.message.reply_text("🧠 [Claude] 처리 중...")
+    try:
+        from agent_teams.secretary.engine import SECRETARY_SYSTEM
+        from agent_teams.secretary.memory import get_full_context
+        memory_context = get_full_context()
+        now = datetime.now()
+        prompt = (
+            f"{SECRETARY_SYSTEM}\n\n"
+            f"현재 시각: {now.strftime('%Y년 %m월 %d일 %A %H:%M')}\n\n"
+            f"[기억]\n{memory_context}\n\n"
+            f"[지훈의 메시지]\n{raw_msg}\n\n"
+            f"위에 대해 응답하세요."
+        )
+        output = await run_claude_oneshot_async(prompt, timeout=300)
+    except Exception as e:
+        output = f"[에러] {str(e)[:300]}"
+
+    await safe_reply(update.message, f"🧠 [secretary/claude] → {user}\n\n{output[:4000]}")
+    log_conversation(user, "secretary/claude", raw_msg, output, team="secretary")
 
 
 async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -313,6 +377,7 @@ def main():
     app.add_handler(CommandHandler("teams", cmd_teams))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CommandHandler("q", cmd_q))
+    app.add_handler(CommandHandler("c", cmd_c))
     app.add_handler(CommandHandler("log", cmd_log))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
