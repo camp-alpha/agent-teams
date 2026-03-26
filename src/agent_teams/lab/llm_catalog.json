@@ -1,0 +1,46 @@
+{
+  "math_physics_llms": [
+    {
+      "name": "Axplorer / AxiomProver",
+      "organization": "Axiom Math",
+      "description": "수학적 패턴 발견 및 난제 해결에 특화. 단일 Mac Pro 급 워크스테이션에서 구동 가능한 효율성 보유.",
+      "specialty": "Pattern discovery, graph theory, Turán problem solving",
+      "url": "https://github.com/AxiomMath"
+    },
+    {
+      "name": "DeepSeek-Math",
+      "organization": "DeepSeek",
+      "description": "수학 추론 능력 극대화. 7B 모델로도 GPT-4에 근접한 수학 벤치마크 성능.",
+      "specialty": "Mathematical reasoning, chain-of-thought",
+      "url": "https://github.com/deepseek-ai/DeepSeek-Math"
+    },
+    {
+      "name": "AlphaEvolve",
+      "organization": "Google DeepMind",
+      "description": "LLM을 활용해 알고리즘을 스스로 개선하고 진화시키는 시스템.",
+      "specialty": "Algorithm evolution, self-improvement",
+      "url": "https://deepmind.google/discover/blog/alphaevolve/"
+    },
+    {
+      "name": "Llama-3-Math-70B",
+      "organization": "Meta",
+      "description": "Llama-3 기반의 수학 특화 파인튜닝 모델.",
+      "specialty": "General mathematics problem solving",
+      "url": "https://huggingface.co/meta-llama"
+    },
+    {
+      "name": "PatternBoost",
+      "organization": "Meta (Research)",
+      "description": "슈퍼컴퓨터를 활용한 수학적 가설 생성 도구. 그래프 이론 난제 해결에 기여.",
+      "specialty": "Hypothesis generation in mathematics",
+      "url": "https://github.com/facebookresearch"
+    }
+  ],
+  "initiatives": [
+    {
+      "name": "expMath (Exponentiating Mathematics)",
+      "organization": "DARPA",
+      "description": "수학자들이 AI 도구를 적극 개발하고 연구에 활용하도록 장려하는 대규모 국방 이니셔티브."
+    }
+  ]
+}

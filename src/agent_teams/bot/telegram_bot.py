@@ -85,6 +85,20 @@ def log_conversation(user: str, agent: str, message: str, response: str,
         pass
 
 
+async def safe_reply(message, text: str, retries: int = 3):
+    """Telegram 전송 with retry (네트워크 타임아웃 대응)."""
+    for attempt in range(retries):
+        try:
+            await message.reply_text(text)
+            return
+        except Exception as e:
+            if attempt < retries - 1:
+                logger.warning(f"Reply failed (attempt {attempt+1}): {e}")
+                await asyncio.sleep(2)
+            else:
+                logger.error(f"Reply failed after {retries} attempts: {e}")
+
+
 def authorized(update: Update) -> bool:
     if not ALLOWED_USER_IDS:
         return True
@@ -154,7 +168,9 @@ async def cmd_briefing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """팀 에이전트에게 질문."""
     if not authorized(update):
+        logger.info(f"cmd_q unauthorized: {update.effective_user.id}")
         return
+    logger.info(f"cmd_q from {update.effective_user.first_name}: {' '.join(ctx.args or [])[:50]}")
     if not ctx.args:
         await update.message.reply_text("사용법: /q [@팀] <메시지>")
         return
@@ -176,7 +192,7 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         raw_msg = " ".join(route.remaining_args)
         await update.message.reply_text(f"⚡ [Gemini] 처리 중...")
         output = await run_gemini_async(raw_msg, timeout=120)
-        await update.message.reply_text(f"⚡ [Gemini] → {user}\n\n{output[:4000]}")
+        await safe_reply(update.message, f"⚡ [Gemini] → {user}\n\n{output[:4000]}")
         log_conversation(user, "gemini", raw_msg, output)
         return
 
@@ -188,18 +204,22 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         agent_label = f"{route.team_id}.{route.agent_id}"
         await update.message.reply_text(f"🤖 [{agent_label}] 처리 중...")
 
-        # infra 팀 → Claude SRE 세션 (실제 시스템 접근)
-        from agent_teams.config import CLAUDE_SESSIONS
-        if route.team_id in CLAUDE_SESSIONS:
-            session_id = CLAUDE_SESSIONS[route.team_id]
-            loop = asyncio.get_event_loop()
-            output = await loop.run_in_executor(
-                None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
-            )
-        else:
-            # 그 외 팀 → Gemini (페르소나 기반)
-            team_prompt = build_team_prompt(route, raw_msg)
-            output = await run_gemini_async(team_prompt, timeout=180)
+        try:
+            # infra 팀 → Claude SRE 세션 (실제 시스템 접근)
+            from agent_teams.config import CLAUDE_SESSIONS
+            if route.team_id in CLAUDE_SESSIONS:
+                session_id = CLAUDE_SESSIONS[route.team_id]
+                loop = asyncio.get_event_loop()
+                output = await loop.run_in_executor(
+                    None, lambda: run_claude_sync(session_id, raw_msg, timeout=120)[0]
+                )
+            else:
+                # 그 외 팀 → Gemini (페르소나 기반)
+                team_prompt = build_team_prompt(route, raw_msg)
+                output = await run_gemini_async(team_prompt, timeout=180)
+        except Exception as e:
+            output = f"[에러] {str(e)[:300]}"
+            logger.error(f"Team agent error ({agent_label}): {e}", exc_info=True)
 
         header = f"🤖 [{agent_label}] → {user}\n\n"
         content = header + output
@@ -208,7 +228,7 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 prefix = header if i == 0 else ""
                 await update.message.reply_text(prefix + output[i:i+4000])
         else:
-            await update.message.reply_text(content)
+            await safe_reply(update.message, content)
         log_conversation(user, agent_label, raw_msg, output, team=route.team_id)
         return
 
@@ -219,7 +239,7 @@ async def cmd_q(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         prompt = f"{secretary.persona}\n\n---\n[비서에게 온 메시지]\n{raw_msg}"
         await update.message.reply_text(f"🤖 [secretary] 처리 중...")
         output = await run_gemini_async(prompt, timeout=120)
-        await update.message.reply_text(f"🤖 [secretary] → {user}\n\n{output[:4000]}")
+        await safe_reply(update.message, f"🤖 [secretary] → {user}\n\n{output[:4000]}")
         log_conversation(user, "secretary", raw_msg, output)
     else:
         output = await run_gemini_async(raw_msg, timeout=120)
@@ -250,19 +270,30 @@ async def cmd_log(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # 일반 메시지 → Secretary 대화 엔진 (기억 기반)
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
+        logger.info(f"Unauthorized: {update.effective_user.id}")
         return
     text = update.message.text
     if not text:
         return
     user = update.effective_user.first_name
-    loop = asyncio.get_event_loop()
-    output = await loop.run_in_executor(None, process_user_response, text)
-    await update.message.reply_text(f"{output[:4000]}")
-    log_conversation(user, "secretary", text, output, team="secretary")
+    logger.info(f"Message from {user}: {text[:50]}")
+    try:
+        loop = asyncio.get_event_loop()
+        output = await loop.run_in_executor(None, process_user_response, text)
+        await safe_reply(update.message, output[:4000])
+        log_conversation(user, "secretary", text, output, team="secretary")
+    except Exception as e:
+        logger.error(f"handle_message error: {e}", exc_info=True)
+        await update.message.reply_text(f"[오류] {str(e)[:200]}")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Error: {context.error}", exc_info=context.error)
+    logger.error(f"Unhandled error: {context.error}", exc_info=context.error)
+    if update and hasattr(update, "effective_message") and update.effective_message:
+        try:
+            await update.effective_message.reply_text(f"[시스템 오류] {str(context.error)[:200]}")
+        except Exception:
+            pass
 
 
 def main():
@@ -273,6 +304,7 @@ def main():
     state = load_state()
     for uid in state.get("allowed_users", []):
         ALLOWED_USER_IDS.add(uid)
+    logger.info(f"Allowed users: {ALLOWED_USER_IDS}")
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
